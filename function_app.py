@@ -25,9 +25,9 @@ async def http_trigger(req: func.HttpRequest) -> func.HttpResponse:
 
     if email:
         # Application parameters (replace with your own information)
-        CLIENT_ID = 'your-client-id'
-        CLIENT_SECRET = 'your-client-secret'
-        TENANT_ID = 'your-tenant-id'
+        CLIENT_ID = 'CLIENT_ID'
+        CLIENT_SECRET = 'CLIENT_SECRET'
+        TENANT_ID = 'TENANT_ID'
 
         # User information (email of the target user)
         USER_EMAIL = email
@@ -39,15 +39,20 @@ async def http_trigger(req: func.HttpRequest) -> func.HttpResponse:
 
         # Format dates in ISO8601
         if START_DATE:
-            start_date_iso = datetime.strptime(START_DATE, '%Y-%m-%d').isoformat() + 'Z'
+            dt_start_date = datetime.strptime(START_DATE, '%Y-%m-%d')
+            start_date_iso = dt_start_date.isoformat() + 'Z'
+            
         else:
-            start_date_iso = (datetime.now() - timedelta(days=5)).isoformat() + 'Z'  # Default to 5 days ago
+            dt_start_date = datetime.now() - timedelta(days=5)
+            start_date_iso = dt_start_date.isoformat() + 'Z'  # Default to 5 days ago
             logging.info(f"No start date provided. Using default start date: {start_date_iso}")
 
         if END_DATE:
-            end_date_iso = datetime.strptime(END_DATE, '%Y-%m-%d').isoformat() + 'Z'
+            dt_end_date = datetime.strptime(END_DATE, '%Y-%m-%d')
+            end_date_iso = dt_end_date.isoformat() + 'Z'
         else:
-            end_date_iso = datetime.now().isoformat() + 'Z'  # Default to now
+            dt_end_date = datetime.now()
+            end_date_iso = dt_end_date.isoformat() + 'Z'  # Default to now
             logging.info(f"No end date provided. Using default end date: {end_date_iso}")
 
         # Authority and scope for authentication
@@ -159,6 +164,7 @@ async def http_trigger(req: func.HttpRequest) -> func.HttpResponse:
         </head>
         <body>
             <h1>Email Processing Results for {USER_EMAIL}</h1>
+            <h2>Period : {dt_start_date.strftime('%d/%m/%Y')} to {dt_end_date.strftime('%d/%m/%Y')} </h2>
             <p>Total number of emails: {emails_count}</p>
             <p>Total size of messages: {messages_size_total_mb:.2f} MB</p>
             <h2>Attachments by Content Type</h2>
@@ -233,7 +239,7 @@ async def process_email(session, headers, message, USER_EMAIL):
             f"https://graph.microsoft.com/v1.0/users/{USER_EMAIL}/messages/"
             f"{message['id']}/attachments?$top=50"
         )
-        email_attachment_counts, email_attachment_sizes  = await get_pdf_attachments(session, headers, attachments_url)
+        email_attachment_counts, email_attachment_sizes  = await get_attachments(session, headers, attachments_url)
 
     # Update the counts and sizes
     for content_type, count in email_attachment_counts.items():
@@ -247,28 +253,23 @@ async def process_email(session, headers, message, USER_EMAIL):
         'attachment_sizes': attachment_sizes
     }
 
-async def get_pdf_attachments(session, headers, url):
+async def get_attachments(session, headers, url):
     attachment_counts = defaultdict(int)  # Counts per contentType
     attachment_sizes = defaultdict(int)   # Sizes per contentType
-    max_retries = 5  # Maximum number of retries for 429 status
     retry_count = 0
 
     while url:
         async with session.get(url, headers=headers) as response:
             if response.status == 429:
-                if retry_count < max_retries:
-                    retry_after = response.headers.get('Retry-After')
-                    if retry_after:
-                        delay = int(retry_after)
-                    else:
-                        delay = 10  # Default delay of 10 seconds
-                    logging.warning(f"Received 429 Too Many Requests. Retrying after {delay} seconds...")
-                    await asyncio.sleep(delay)
-                    retry_count += 1
-                    continue
+                retry_after = response.headers.get('Retry-After')
+                if retry_after:
+                    delay = int(retry_after)
                 else:
-                    logging.error("Maximum retries reached for 429 Too Many Requests.")
-                    break
+                    delay = 10  # Default delay of 10 seconds
+                logging.warning(f"Received 429 Too Many Requests. Retrying after {delay} seconds...")
+                await asyncio.sleep(delay)
+                retry_count += 1
+                continue
             elif response.status != 200:
                 logging.error(f"Error retrieving attachments: {response.status}")
                 break
@@ -282,10 +283,9 @@ async def get_pdf_attachments(session, headers, url):
                         size = int(attachment.get('size', 0))
                         attachment_counts[content_type] += 1
                         attachment_sizes[content_type] += size
-
+                        logging.info(f"Get attachment info successful wait for the end...")
                 # Handle pagination if necessary
                 url = data.get('@odata.nextLink', None)
-                retry_count = 0  # Reset retry count after a successful request
                 if not url:
                     break
 
